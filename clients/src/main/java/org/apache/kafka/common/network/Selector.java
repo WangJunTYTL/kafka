@@ -237,7 +237,7 @@ public class Selector implements Selectable {
      * @param send The request to send
      */
     public void send(Send send) {
-        KafkaChannel channel = channelOrFail(send.destination());
+        KafkaChannel channel = channelOrFail(send.destination()); // 获取可以发送的消息的channel
         try {
             channel.setSend(send);
         } catch (CancelledKeyException e) {

@@ -240,7 +240,7 @@ public class NetworkClient implements KafkaClient {
 
     private void doSend(ClientRequest request, long now) {
         request.setSendTimeMs(now);
-        this.inFlightRequests.add(request);
+        this.inFlightRequests.add(request); // 请求队列
         selector.send(request.request());
     }
 

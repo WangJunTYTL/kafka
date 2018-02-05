@@ -3,9 +3,9 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
@@ -54,6 +54,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>
  * The accumulator uses a bounded amount of memory and append calls will block when that memory is exhausted, unless
  * this behavior is explicitly disabled.
+ *
+ * 消息发送本地队列，本地会批量向kafka发送消息，同时这里可以防止堆栈溢出，当消息积压到一定程度，会阻塞消息发送
  */
 public final class RecordAccumulator {
 
@@ -68,6 +70,7 @@ public final class RecordAccumulator {
     private final long retryBackoffMs;
     private final BufferPool free;
     private final Time time;
+    // 每一个partition对应的消息queue集合，这里注意下，队列中一个element不是一条消息，而是一批消息【RecordBatch】
     private final ConcurrentMap<TopicPartition, Deque<RecordBatch>> batches;
     private final IncompleteRecordBatches incomplete;
     // The following variables are only accessed by the sender thread, so we don't need to protect them.
@@ -76,7 +79,7 @@ public final class RecordAccumulator {
 
     /**
      * Create a new record accumulator
-     * 
+     *
      * @param batchSize The size to use when allocating {@link org.apache.kafka.common.record.MemoryRecords} instances
      * @param totalSize The maximum memory the record accumulator can use.
      * @param compression The compression codec for the records
@@ -163,16 +166,17 @@ public final class RecordAccumulator {
                                      long maxTimeToBlock) throws InterruptedException {
         // We keep track of the number of appending thread to make sure we do not miss batches in
         // abortIncompleteBatches().
-        appendsInProgress.incrementAndGet();
+        appendsInProgress.incrementAndGet(); // 写入消息时需要先++，写入成功后还会--
         try {
             // check if we have an in-progress batch
-            Deque<RecordBatch> dq = getOrCreateDeque(tp);
+            Deque<RecordBatch> dq = getOrCreateDeque(tp); // 获取消息对应的queue，这里每个partition都会有一个对应的queue
             synchronized (dq) {
                 if (closed)
                     throw new IllegalStateException("Cannot send after the producer is closed.");
+                // 写入消息到本地
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, callback, dq);
                 if (appendResult != null)
-                    return appendResult;
+                    return appendResult; // 这里返回代表消息已经写入到本地了，否则看下面逻辑
             }
 
             // we don't have an in-progress record batch try to allocate a new batch
@@ -191,15 +195,18 @@ public final class RecordAccumulator {
                     return appendResult;
                 }
                 MemoryRecords records = MemoryRecords.emptyRecords(buffer, compression, this.batchSize);
+                // 新创建一个消息段集合，消息段集合一个消息集合，当集合达到设定的大小时，消息会被发送到服务端
                 RecordBatch batch = new RecordBatch(tp, records, time.milliseconds());
                 FutureRecordMetadata future = Utils.notNull(batch.tryAppend(timestamp, key, value, callback, time.milliseconds()));
 
-                dq.addLast(batch);
-                incomplete.add(batch);
+                dq.addLast(batch); // 消息写入
+                incomplete.add(batch); // 存放还没有被ack的消息
+
+                // 这里dp.size > 1 会导致消息集合立马就是满的啊？ TODO
                 return new RecordAppendResult(future, dq.size() > 1 || batch.records.isFull(), true);
             }
         } finally {
-            appendsInProgress.decrementAndGet();
+            appendsInProgress.decrementAndGet(); // 追加成功后，会--，这里又没有写入到server，只是在本地，为什么需要-- TODO
         }
     }
 
@@ -209,11 +216,12 @@ public final class RecordAccumulator {
      */
     private RecordAppendResult tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, Deque<RecordBatch> deque) {
         RecordBatch last = deque.peekLast();
-        if (last != null) {
+        if (last != null) { // TODO 这里为什么要判断是否存在最后一个消息，且如果不存在就返回null
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, callback, time.milliseconds());
             if (future == null)
                 last.records.close();
             else
+                // TODO 这里队列长度为1时，为什么batchIsFull就等于full
                 return new RecordAppendResult(future, deque.size() > 1 || last.records.isFull(), false);
         }
         return null;
@@ -355,7 +363,7 @@ public final class RecordAccumulator {
     /**
      * Drain all the data for the given nodes and collate them into a list of batches that will fit within the specified
      * size on a per-node basis. This method attempts to avoid choosing the same topic-node over and over.
-     * 
+     *
      * @param cluster The current cluster metadata
      * @param nodes The list of node to drain
      * @param maxSize The maximum number of bytes to drain
@@ -424,7 +432,7 @@ public final class RecordAccumulator {
         Deque<RecordBatch> d = this.batches.get(tp);
         if (d != null)
             return d;
-        d = new ArrayDeque<>();
+        d = new ArrayDeque<>(); // 数组队列
         Deque<RecordBatch> previous = this.batches.putIfAbsent(tp, d);
         if (previous == null)
             return d;
@@ -439,7 +447,7 @@ public final class RecordAccumulator {
         incomplete.remove(batch);
         free.deallocate(batch.records.buffer(), batch.records.initialCapacity());
     }
-    
+
     /**
      * Are there any threads currently waiting on a flush?
      *
@@ -453,7 +461,7 @@ public final class RecordAccumulator {
     Map<TopicPartition, Deque<RecordBatch>> batches() {
         return Collections.unmodifiableMap(batches);
     }
-    
+
     /**
      * Initiate the flushing of data from the accumulator...this makes all requests immediately ready
      */
@@ -559,7 +567,7 @@ public final class RecordAccumulator {
             this.unknownLeaderTopics = unknownLeaderTopics;
         }
     }
-    
+
     /*
      * A threadsafe helper class to hold RecordBatches that haven't been ack'd yet
      */
@@ -569,13 +577,13 @@ public final class RecordAccumulator {
         public IncompleteRecordBatches() {
             this.incomplete = new HashSet<RecordBatch>();
         }
-        
+
         public void add(RecordBatch batch) {
             synchronized (incomplete) {
                 this.incomplete.add(batch);
             }
         }
-        
+
         public void remove(RecordBatch batch) {
             synchronized (incomplete) {
                 boolean removed = this.incomplete.remove(batch);
@@ -583,7 +591,7 @@ public final class RecordAccumulator {
                     throw new IllegalStateException("Remove from the incomplete set failed. This should be impossible.");
             }
         }
-        
+
         public Iterable<RecordBatch> all() {
             synchronized (incomplete) {
                 return new ArrayList<>(this.incomplete);

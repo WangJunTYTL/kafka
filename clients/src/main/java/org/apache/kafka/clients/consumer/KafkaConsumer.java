@@ -500,12 +500,12 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     private static final AtomicInteger CONSUMER_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
     private static final String JMX_PREFIX = "kafka.consumer";
 
-    private final String clientId;
+    private final String clientId; // 客户端标识Id
     private final ConsumerCoordinator coordinator;
     private final Deserializer<K> keyDeserializer;
     private final Deserializer<V> valueDeserializer;
     private final Fetcher<K, V> fetcher;
-    private final ConsumerInterceptors<K, V> interceptors;
+    private final ConsumerInterceptors<K, V> interceptors; // 仅仅是为了给用户提供消息拦截处理
 
     private final Time time;
     private final ConsumerNetworkClient client;
@@ -963,13 +963,13 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      *             partitions to consume from
      */
     @Override
-    public ConsumerRecords<K, V> poll(long timeout) {
+    public ConsumerRecords<K, V> poll(long timeout) { // timeout 本地拉取数据的buffer没有数据时，等待时间，索引poll可能返回empty
         acquire();
         try {
             if (timeout < 0)
                 throw new IllegalArgumentException("Timeout must not be negative");
 
-            if (this.subscriptions.hasNoSubscriptionOrUserAssignment())
+            if (this.subscriptions.hasNoSubscriptionOrUserAssignment()) // 验证是否订阅了响应的topic或是否分配了partition
                 throw new IllegalStateException("Consumer is not subscribed to any topics or assigned any partitions");
 
             // poll for new data until the timeout expires
@@ -984,11 +984,11 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     //
                     // NOTE: since the consumed position has already been updated, we must not allow
                     // wakeups or any other errors to be triggered prior to returning the fetched records.
-                    fetcher.sendFetches();
+                    fetcher.sendFetches(); // 在把数据返回前，继续下一次数据拉取，这样可以保证本地buffer的数据总是充足的，不会因为拉取数据阻塞用户对数据的处理
                     client.pollNoWakeup();
 
                     if (this.interceptors == null)
-                        return new ConsumerRecords<>(records);
+                        return new ConsumerRecords<>(records); // 一次拉取消息后，会返回很多消息，这里是一个消息的集合
                     else
                         return this.interceptors.onConsume(new ConsumerRecords<>(records));
                 }
@@ -997,7 +997,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                 remaining = timeout - elapsed;
             } while (remaining > 0);
 
-            return ConsumerRecords.empty();
+            return ConsumerRecords.empty(); // 在timeout时间内，没有拉取到数据就返回empty
         } finally {
             release();
         }
@@ -1010,7 +1010,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * @return The fetched records (may be empty)
      */
     private Map<TopicPartition, List<ConsumerRecord<K, V>>> pollOnce(long timeout) {
-        coordinator.poll(time.milliseconds());
+        coordinator.poll(time.milliseconds()); // 这里是做什么 TODO？
 
         // fetch positions if we have partitions we're subscribed to that we
         // don't know the offset for
@@ -1023,7 +1023,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             return records;
 
         // send any new fetches (won't resend pending fetches)
-        fetcher.sendFetches();
+        fetcher.sendFetches(); // 本地buffer没有数据，需要向服务端请求数据
 
         long now = time.milliseconds();
         long pollTimeout = Math.min(coordinator.timeToNextPoll(now), timeout);

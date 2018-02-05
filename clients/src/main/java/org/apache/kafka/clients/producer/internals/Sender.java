@@ -222,13 +222,13 @@ public class Sender implements Runnable {
             pollTimeout = 0;
         }
         for (ClientRequest request : requests)
-            client.send(request, now);
+            client.send(request, now); // 请求以队列的方式发送
 
         // if some partitions are already ready to be sent, the select time would be 0;
         // otherwise if some partition already has some data accumulated but not ready yet,
         // the select time will be the time difference between now and its linger expiry time;
         // otherwise the select time will be the time difference between now and the metadata expiry time;
-        this.client.poll(pollTimeout, now);
+        this.client.poll(pollTimeout, now); // 这里才会与服务端通信
     }
 
     /**

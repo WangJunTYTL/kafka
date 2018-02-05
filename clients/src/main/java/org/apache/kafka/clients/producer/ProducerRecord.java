@@ -39,7 +39,7 @@ package org.apache.kafka.clients.producer;
 public class ProducerRecord<K, V> {
 
     private final String topic;
-    private final Integer partition;
+    private final Integer partition; // 消息对应的partition，发送时用户可以指定，也可以由程序计算得出
     private final K key;
     private final V value;
     private final Long timestamp;
@@ -64,7 +64,7 @@ public class ProducerRecord<K, V> {
                     String.format("Invalid partition: %d. Partition number should always be non-negative or null.", partition));
         this.topic = topic;
         this.partition = partition;
-        this.key = key;
+        this.key = key; // kafka的设计：消息是KV格式，这里key是为了消息分区而设计
         this.value = value;
         this.timestamp = timestamp;
     }
@@ -88,7 +88,7 @@ public class ProducerRecord<K, V> {
      * @param key The key that will be included in the record
      * @param value The record contents
      */
-    public ProducerRecord(String topic, K key, V value) {
+    public ProducerRecord(String topic, K key, V value) {  // 发送给kafka的消息格式
         this(topic, null, null, key, value);
     }
 

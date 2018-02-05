@@ -21,6 +21,8 @@ import org.apache.kafka.common.record.Record;
 
 /**
  * The metadata for a record that has been acknowledged by the server
+ *
+ * 消息发送成功后，服务端响应数据
  */
 public final class RecordMetadata {
 
@@ -29,17 +31,17 @@ public final class RecordMetadata {
      */
     public static final int UNKNOWN_PARTITION = -1;
 
-    private final long offset;
+    private final long offset; // 该消息id编号
     // The timestamp of the message.
     // If LogAppendTime is used for the topic, the timestamp will be the timestamp returned by the broker.
     // If CreateTime is used for the topic, the timestamp is the timestamp in the corresponding ProducerRecord if the
     // user provided one. Otherwise, it will be the producer local time when the producer record was handed to the
     // producer.
-    private final long timestamp;
-    private final long checksum;
+    private final long timestamp; // 消息生产时间，可以由用户指定，也可以有kafka生成
+    private final long checksum; // TODO
     private final int serializedKeySize;
     private final int serializedValueSize;
-    private final TopicPartition topicPartition;
+    private final TopicPartition topicPartition; // 消息对应的topic和partition
 
     private RecordMetadata(TopicPartition topicPartition, long offset, long timestamp, long
         checksum, int serializedKeySize, int serializedValueSize) {

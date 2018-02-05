@@ -28,13 +28,15 @@ import org.slf4j.LoggerFactory;
  * A batch of records that is or will be sent.
  * 
  * This class is not thread safe and external synchronization must be used when modifying it
+ *
+ *
  */
 public final class RecordBatch {
 
     private static final Logger log = LoggerFactory.getLogger(RecordBatch.class);
 
     public int recordCount = 0;
-    public int maxRecordSize = 0;
+    public int maxRecordSize = 0; // TODO
     public volatile int attempts = 0;
     public final long createdMs;
     public long drainedMs;
@@ -64,7 +66,7 @@ public final class RecordBatch {
      * @return The RecordSend corresponding to this record or null if there isn't sufficient room.
      */
     public FutureRecordMetadata tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, long now) {
-        if (!this.records.hasRoomFor(key, value)) {
+        if (!this.records.hasRoomFor(key, value)) { // 没有空间存放数据了
             return null;
         } else {
             long checksum = this.records.append(offsetCounter++, timestamp, key, value);

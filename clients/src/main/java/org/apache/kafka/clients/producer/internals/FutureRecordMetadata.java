@@ -24,10 +24,10 @@ import org.apache.kafka.clients.producer.RecordMetadata;
  */
 public final class FutureRecordMetadata implements Future<RecordMetadata> {
 
-    private final ProduceRequestResult result;
+    private final ProduceRequestResult result; // TODO
     private final long relativeOffset;
     private final long timestamp;
-    private final long checksum;
+    private final long checksum; // TODO 消息校验码
     private final int serializedKeySize;
     private final int serializedValueSize;
 

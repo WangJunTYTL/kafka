@@ -133,15 +133,15 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private static final String JMX_PREFIX = "kafka.producer";
 
     private String clientId;
-    private final Partitioner partitioner;
+    private final Partitioner partitioner; // 维护partition信息，该信息应该是从server中获取
     private final int maxRequestSize;
     private final long totalMemorySize;
     private final Metadata metadata;
-    private final RecordAccumulator accumulator;
-    private final Sender sender;
+    private final RecordAccumulator accumulator; // 本地消息缓存区
+    private final Sender sender; // 负责发送消息到server
     private final Metrics metrics;
     private final Thread ioThread;
-    private final CompressionType compressionType;
+    private final CompressionType compressionType; // 消息内容压缩类型
     private final Sensor errors;
     private final Time time;
     private final Serializer<K> keySerializer;
@@ -149,7 +149,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private final ProducerConfig producerConfig;
     private final long maxBlockTimeMs;
     private final int requestTimeoutMs;
-    private final ProducerInterceptors<K, V> interceptors;
+    private final ProducerInterceptors<K, V> interceptors; // 为用户提供一些消息发送前后阶段的处理
 
     /**
      * A producer is instantiated by providing a set of key-value pairs as configuration. Valid configuration strings
@@ -212,6 +212,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
             clientId = config.getString(ProducerConfig.CLIENT_ID_CONFIG);
             if (clientId.length() <= 0)
+                // 一个客户端可以启动多个Client，作者建议启动一个就可以，单线程比多线程快
                 clientId = "producer-" + PRODUCER_CLIENT_ID_SEQUENCE.getAndIncrement();
             Map<String, String> metricTags = new LinkedHashMap<String, String>();
             metricTags.put("client-id", clientId);
@@ -311,10 +312,10 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     this.requestTimeoutMs, time);
             this.sender = new Sender(client,
                     this.metadata,
-                    this.accumulator,
+                    this.accumulator, // 本地消息生成缓存区
                     config.getInt(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION) == 1,
                     config.getInt(ProducerConfig.MAX_REQUEST_SIZE_CONFIG),
-                    (short) parseAcks(config.getString(ProducerConfig.ACKS_CONFIG)),
+                    (short) parseAcks(config.getString(ProducerConfig.ACKS_CONFIG)), //ack设置
                     config.getInt(ProducerConfig.RETRIES_CONFIG),
                     this.metrics,
                     new SystemTime(),
@@ -381,7 +382,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * byte[] key = "key".getBytes();
      * byte[] value = "value".getBytes();
      * ProducerRecord<byte[],byte[]> record = new ProducerRecord<byte[],byte[]>("my-topic", key, value)
-     * producer.send(record).get();
+     * producer.send(record).get(); // 阻塞同步发送，否则是把消息先发送到本地buffer，然后批量发送到server
      * }</pre>
      * <p>
      * Fully non-blocking usage can make use of the {@link Callback} parameter to provide a callback that
@@ -432,7 +433,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     public Future<RecordMetadata> send(ProducerRecord<K, V> record, Callback callback) {
         // intercept the record, which can be potentially modified; this method does not throw exceptions
         ProducerRecord<K, V> interceptedRecord = this.interceptors == null ? record : this.interceptors.onSend(record);
-        return doSend(interceptedRecord, callback);
+        return doSend(interceptedRecord, callback); // 返回的是一个Future对象，保证不会阻塞消息生产
     }
 
     /**
@@ -462,20 +463,22 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                         " specified in value.serializer");
             }
 
-            int partition = partition(record, serializedKey, serializedValue, cluster);
-            int serializedSize = Records.LOG_OVERHEAD + Record.recordSize(serializedKey, serializedValue);
-            ensureValidRecordSize(serializedSize);
+            int partition = partition(record, serializedKey, serializedValue, cluster); // 计算消息对应的partition
+            int serializedSize = Records.LOG_OVERHEAD + Record.recordSize(serializedKey, serializedValue); // 消息转成字节数组后数组大小
+            ensureValidRecordSize(serializedSize); // 验证消息大小是否超过限制
             tp = new TopicPartition(record.topic(), partition);
-            long timestamp = record.timestamp() == null ? time.milliseconds() : record.timestamp();
+            long timestamp = record.timestamp() == null ? time.milliseconds() : record.timestamp(); // 消息的时间
             log.trace("Sending record {} with callback {} to topic {} partition {}", record, callback, record.topic(), partition);
             // producer callback will make sure to call both 'callback' and interceptor callback
             Callback interceptCallback = this.interceptors == null ? callback : new InterceptorCallback<>(callback, this.interceptors, tp);
+            // 这里是把消息放入到本地缓存区
             RecordAccumulator.RecordAppendResult result = accumulator.append(tp, timestamp, serializedKey, serializedValue, interceptCallback, remainingWaitMs);
+            // 假如本地发送消息缓冲区是满的，则唤醒发送线程向server发送消息
             if (result.batchIsFull || result.newBatchCreated) {
                 log.trace("Waking up the sender since topic {} partition {} is either full or getting a new batch", record.topic(), partition);
                 this.sender.wakeup();
             }
-            return result.future;
+            return result.future; // 这里立刻返回，不会阻塞
             // handling exceptions and record the errors;
             // for API exceptions return them in the future,
             // for other exceptions throw directly
@@ -746,8 +749,8 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private int partition(ProducerRecord<K, V> record, byte[] serializedKey, byte[] serializedValue, Cluster cluster) {
         Integer partition = record.partition();
         return partition != null ?
-                partition :
-                partitioner.partition(
+                partition :  // 如果用户指定，使用用户指定的partition
+                partitioner.partition(  // 如果用户没有指定，计算partition值
                         record.topic(), record.key(), serializedKey, record.value(), serializedValue, cluster);
     }
 

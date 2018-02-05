@@ -24,7 +24,7 @@ import java.io.Serializable;
 public final class TopicPartition implements Serializable {
 
     private int hash = 0;
-    private final int partition;
+    private final int partition; // consumer 已读取日志offset  consumer poll 后默认会自动commit offset 也可以选择手动控制
     private final String topic;
 
     public TopicPartition(String topic, int partition) {

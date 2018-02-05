@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -47,13 +47,14 @@ public class Producer extends Thread {
             long startTime = System.currentTimeMillis();
             if (isAsync) { // Send asynchronously
                 producer.send(new ProducerRecord<>(topic,
-                    messageNo,
-                    messageStr), new DemoCallBack(startTime, messageNo, messageStr));
+                                messageNo,
+                                messageStr),
+                        new DemoCallBack(startTime, messageNo, messageStr));
             } else { // Send synchronously
                 try {
                     producer.send(new ProducerRecord<>(topic,
-                        messageNo,
-                        messageStr)).get();
+                            messageNo,
+                            messageStr)).get();
                     System.out.println("Sent message: (" + messageNo + ", " + messageStr + ")");
                 } catch (InterruptedException | ExecutionException e) {
                     e.printStackTrace();
@@ -89,9 +90,9 @@ class DemoCallBack implements Callback {
         long elapsedTime = System.currentTimeMillis() - startTime;
         if (metadata != null) {
             System.out.println(
-                "message(" + key + ", " + message + ") sent to partition(" + metadata.partition() +
-                    "), " +
-                    "offset(" + metadata.offset() + ") in " + elapsedTime + " ms");
+                    "message(" + key + ", " + message + ") sent to partition(" + metadata.partition() +
+                            "), " +
+                            "offset(" + metadata.offset() + ") in " + elapsedTime + " ms");
         } else {
             exception.printStackTrace();
         }
