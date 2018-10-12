@@ -169,14 +169,16 @@ public final class RecordAccumulator {
         appendsInProgress.incrementAndGet(); // 写入消息时需要先++，写入成功后还会--
         try {
             // check if we have an in-progress batch
-            Deque<RecordBatch> dq = getOrCreateDeque(tp); // 获取消息对应的queue，这里每个partition都会有一个对应的queue
+            // 获取当前目标partition对应的消息缓存区(Deque)，这里每个partition都会有一个对应的queue
+            Deque<RecordBatch> dq = getOrCreateDeque(tp);
             synchronized (dq) {
                 if (closed)
                     throw new IllegalStateException("Cannot send after the producer is closed.");
                 // 写入消息到本地
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, callback, dq);
                 if (appendResult != null)
-                    return appendResult; // 这里返回代表消息已经写入到本地了，否则看下面逻辑
+                    // 这里返回代表消息已经写入到本地了，这里仅代表消息写入本地buffer成功
+                    return appendResult;
             }
 
             // we don't have an in-progress record batch try to allocate a new batch
@@ -215,10 +217,13 @@ public final class RecordAccumulator {
      * resources (like compression streams buffers).
      */
     private RecordAppendResult tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, Deque<RecordBatch> deque) {
+        // 队列中的最后一个元素
         RecordBatch last = deque.peekLast();
-        if (last != null) { // TODO 这里为什么要判断是否存在最后一个消息，且如果不存在就返回null
+        // 判断buffer是否已经存入消息，如果存入，就不需要在计算offset了，直接++即可
+        if (last != null) {
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, callback, time.milliseconds());
             if (future == null)
+                // 该消息没有被写入
                 last.records.close();
             else
                 // TODO 这里队列长度为1时，为什么batchIsFull就等于full

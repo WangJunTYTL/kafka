@@ -501,19 +501,19 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     private static final String JMX_PREFIX = "kafka.consumer";
 
     private final String clientId; // 客户端标识Id
-    private final ConsumerCoordinator coordinator;
-    private final Deserializer<K> keyDeserializer;
-    private final Deserializer<V> valueDeserializer;
-    private final Fetcher<K, V> fetcher;
+    private final ConsumerCoordinator coordinator; // 协调Consumer的工作
+    private final Deserializer<K> keyDeserializer; // Message key 反序列化
+    private final Deserializer<V> valueDeserializer; // message value 发序列化
+    private final Fetcher<K, V> fetcher; // 负责处理服务端的交互
     private final ConsumerInterceptors<K, V> interceptors; // 仅仅是为了给用户提供消息拦截处理
 
     private final Time time;
-    private final ConsumerNetworkClient client;
+    private final ConsumerNetworkClient client; // 处理网络IO
     private final Metrics metrics;
-    private final SubscriptionState subscriptions;
+    private final SubscriptionState subscriptions; // Consumer状态维护：topic、partition、offset
     private final Metadata metadata;
     private final long retryBackoffMs;
-    private final long requestTimeoutMs;
+    private final long requestTimeoutMs; // 请求超时时间
     private volatile boolean closed = false;
 
     // currentThread holds the threadId of the current thread accessing KafkaConsumer
@@ -598,7 +598,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             if (this.requestTimeoutMs <= sessionTimeOutMs || this.requestTimeoutMs <= fetchMaxWaitMs)
                 throw new ConfigException(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG + " should be greater than " + ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG + " and " + ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG);
             this.time = new SystemTime();
-
+            // consumer 可以手动设置id，也可以自动生成，建议是自动生成
             String clientId = config.getString(ConsumerConfig.CLIENT_ID_CONFIG);
             if (clientId.length() <= 0)
                 clientId = "consumer-" + CONSUMER_CLIENT_ID_SEQUENCE.getAndIncrement();
@@ -639,7 +639,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             ClusterResourceListeners clusterResourceListeners = configureClusterResourceListeners(keyDeserializer, valueDeserializer, reporters, interceptorList);
             this.metadata = new Metadata(retryBackoffMs, config.getLong(ConsumerConfig.METADATA_MAX_AGE_CONFIG), false, clusterResourceListeners);
             List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(config.getList(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG));
-            this.metadata.update(Cluster.bootstrap(addresses), 0);
+            this.metadata.update(Cluster.bootstrap(addresses), 0); // 服务端地址
             String metricGrpPrefix = "consumer";
             ChannelBuilder channelBuilder = ClientUtils.createChannelBuilder(config.values());
             NetworkClient netClient = new NetworkClient(
@@ -680,7 +680,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     config.getInt(ConsumerConfig.FETCH_MAX_BYTES_CONFIG),
                     config.getInt(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG),
                     config.getInt(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG),
-                    config.getInt(ConsumerConfig.MAX_POLL_RECORDS_CONFIG),
+                    config.getInt(ConsumerConfig.MAX_POLL_RECORDS_CONFIG), // 设置最大拉取条数
                     config.getBoolean(ConsumerConfig.CHECK_CRCS_CONFIG),
                     this.keyDeserializer,
                     this.valueDeserializer,
@@ -741,7 +741,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * process of getting reassigned).
      * @return The set of partitions currently assigned to this consumer
      */
-    public Set<TopicPartition> assignment() {
+    public Set<TopicPartition> assignment() {  // 得到本consumer分配的partition列表
         acquire();
         try {
             return Collections.unmodifiableSet(new HashSet<>(this.subscriptions.assignedPartitions()));
@@ -976,6 +976,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             long start = time.milliseconds();
             long remaining = timeout;
             do {
+                // 到服务端拉取一次数据
                 Map<TopicPartition, List<ConsumerRecord<K, V>>> records = pollOnce(remaining);
                 if (!records.isEmpty()) {
                     // before returning the fetched records, we can send off the next round of fetches
@@ -984,7 +985,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     //
                     // NOTE: since the consumed position has already been updated, we must not allow
                     // wakeups or any other errors to be triggered prior to returning the fetched records.
-                    fetcher.sendFetches(); // 在把数据返回前，继续下一次数据拉取，这样可以保证本地buffer的数据总是充足的，不会因为拉取数据阻塞用户对数据的处理
+                    fetcher.sendFetches(); // 非阻塞 在把数据返回前，继续下一次数据拉取，这样可以保证本地buffer的数据总是充足的，不会因为拉取数据阻塞用户对数据的处理
                     client.pollNoWakeup();
 
                     if (this.interceptors == null)
@@ -1010,11 +1011,11 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * @return The fetched records (may be empty)
      */
     private Map<TopicPartition, List<ConsumerRecord<K, V>>> pollOnce(long timeout) {
-        coordinator.poll(time.milliseconds()); // 这里是做什么 TODO？
+        coordinator.poll(time.milliseconds()); // 这里是做什么 ，提交offset
 
         // fetch positions if we have partitions we're subscribed to that we
         // don't know the offset for
-        if (!subscriptions.hasAllFetchPositions())
+        if (!subscriptions.hasAllFetchPositions()) // 如果未获取到partition的offset，重置partition的offset
             updateFetchPositions(this.subscriptions.missingFetchPositions());
 
         // if data is available already, return it immediately
@@ -1066,10 +1067,10 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      *             is too large or if the committed offset is invalid).
      */
     @Override
-    public void commitSync() {
+    public void commitSync() { // 记录offset，如果选用zk，offset会记录在zk里面
         acquire();
         try {
-            commitSync(subscriptions.allConsumed());
+            commitSync(subscriptions.allConsumed());// 获取该consumer下分配的所有partition的offset，提交给ConsumerCoordinator
         } finally {
             release();
         }
@@ -1177,7 +1178,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         acquire();
         try {
             log.debug("Seeking to offset {} for partition {}", offset, partition);
-            this.subscriptions.seek(partition, offset);
+            this.subscriptions.seek(partition, offset); // 下次poll的时候将使用该offset
         } finally {
             release();
         }
@@ -1552,6 +1553,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     private void acquire() {
         ensureNotClosed();
+        // 比较当前访问者的线程id是否和已经获得锁的线程Id是否相等，如果不等说明被别的线程正在访问
         long threadId = Thread.currentThread().getId();
         if (threadId != currentThread.get() && !currentThread.compareAndSet(NO_CURRENT_THREAD, threadId))
             throw new ConcurrentModificationException("KafkaConsumer is not safe for multi-threaded access");

@@ -267,7 +267,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
       if (authorizedTopics.isEmpty)
         sendResponseCallback(Map.empty)
-      else if (header.apiVersion == 0) {
+      else if (header.apiVersion == 0) { // 如果版本是0，offset存储到zk中，版本是1，offset存储到kafka中
         // for version 0 always store offsets to ZK
         val responseInfo = authorizedTopics.map {
           case (topicPartition, partitionData) =>
@@ -276,6 +276,7 @@ class KafkaApis(val requestChannel: RequestChannel,
               if (partitionData.metadata != null && partitionData.metadata.length > config.offsetMetadataMaxSize)
                 (topicPartition, Errors.OFFSET_METADATA_TOO_LARGE.code)
               else {
+                // 更新offset
                 zkUtils.updatePersistentPath(s"${topicDirs.consumerOffsetDir}/${topicPartition.partition}", partitionData.offset.toString)
                 (topicPartition, Errors.NONE.code)
               }

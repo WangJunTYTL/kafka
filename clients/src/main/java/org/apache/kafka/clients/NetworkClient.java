@@ -275,6 +275,7 @@ public class NetworkClient implements KafkaClient {
         for (ClientResponse response : responses) {
             if (response.request().hasCallback()) {
                 try {
+                    // 假如有回调函数，则执行回调函数，为了不阻塞消息的处理，用户最好保证callback函数可以立即返回
                     response.request().callback().onComplete(response);
                 } catch (Exception e) {
                     log.error("Uncaught error in request completion:", e);

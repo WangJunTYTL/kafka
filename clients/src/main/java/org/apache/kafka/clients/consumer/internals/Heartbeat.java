@@ -17,14 +17,14 @@ package org.apache.kafka.clients.consumer.internals;
  */
 public final class Heartbeat {
     private final long sessionTimeout;
-    private final long heartbeatInterval;
+    private final long heartbeatInterval; // 心跳自动监测时间间隔
     private final long maxPollInterval;
-    private final long retryBackoffMs;
+    private final long retryBackoffMs; // 重试时间间隔
 
     private volatile long lastHeartbeatSend; // volatile since it is read by metrics
-    private long lastHeartbeatReceive;
-    private long lastSessionReset;
-    private long lastPoll;
+    private long lastHeartbeatReceive; // 上次接收时间
+    private long lastSessionReset; //
+    private long lastPoll; // 上次发送时间
     private boolean heartbeatFailed;
 
     public Heartbeat(long sessionTimeout,
@@ -65,6 +65,7 @@ public final class Heartbeat {
         return this.lastHeartbeatSend;
     }
 
+    // 计算离下次心跳发送的时间间隔
     public long timeToNextHeartbeat(long now) {
         long timeSinceLastHeartbeat = now - Math.max(lastHeartbeatSend, lastSessionReset);
         final long delayToNextHeartbeat;
@@ -73,7 +74,8 @@ public final class Heartbeat {
         else
             delayToNextHeartbeat = heartbeatInterval;
 
-        if (timeSinceLastHeartbeat > delayToNextHeartbeat)
+
+        if (timeSinceLastHeartbeat > delayToNextHeartbeat) // 下次发送时间未到
             return 0;
         else
             return delayToNextHeartbeat - timeSinceLastHeartbeat;

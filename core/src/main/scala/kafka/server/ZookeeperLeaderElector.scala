@@ -70,7 +70,7 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
      */
     if(leaderId != -1) {
        debug("Broker %d has been elected as leader, so stopping the election process.".format(leaderId))
-       return amILeader
+       return amILeader // 已有leader，设置leaderId
     }
 
     try {
@@ -87,9 +87,9 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
         // If someone else has written the path, then
         leaderId = getControllerID 
 
-        if (leaderId != -1)
+        if (leaderId != -1) // leader已被选举
           debug("Broker %d was elected as leader instead of broker %d".format(leaderId, brokerId))
-        else
+        else  // 需要重新选举
           warn("A leader has been elected but just resigned, this will result in another round of election")
 
       case e2: Throwable =>

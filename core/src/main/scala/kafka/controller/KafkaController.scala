@@ -46,7 +46,7 @@ import java.util.concurrent.locks.ReentrantLock
 import kafka.server._
 import kafka.common.TopicAndPartition
 
-class ControllerContext(val zkUtils: ZkUtils,
+class ControllerContext(val zkUtils: ZkUtils, // 负责leader选举
                         val zkSessionTimeout: Int) {
   var controllerChannelManager: ControllerChannelManager = null
   val controllerLock: ReentrantLock = new ReentrantLock()
@@ -136,7 +136,7 @@ object KafkaController extends Logging {
       Json.parseFull(controllerInfoString) match {
         case Some(m) =>
           val controllerInfo = m.asInstanceOf[Map[String, Any]]
-          controllerInfo.get("brokerid").get.asInstanceOf[Int]
+          controllerInfo.get("brokerid").get.asInstanceOf[Int] // 返回 brokerid
         case None => throw new KafkaException("Failed to parse the controller info json [%s].".format(controllerInfoString))
       }
     } catch {

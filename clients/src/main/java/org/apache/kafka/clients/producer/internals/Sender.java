@@ -122,6 +122,7 @@ public class Sender implements Runnable {
      * The main run loop for the sender thread
      */
     public void run() {
+        // background i/o 异步发布消息线程
         log.debug("Starting Kafka producer I/O thread.");
 
         // main loop, runs until close is called
@@ -222,7 +223,8 @@ public class Sender implements Runnable {
             pollTimeout = 0;
         }
         for (ClientRequest request : requests)
-            client.send(request, now); // 请求以队列的方式发送
+            // 请求以队列的方式发送
+            client.send(request, now);
 
         // if some partitions are already ready to be sent, the select time would be 0;
         // otherwise if some partition already has some data accumulated but not ready yet,

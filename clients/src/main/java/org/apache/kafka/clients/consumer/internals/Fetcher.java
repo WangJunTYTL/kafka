@@ -85,7 +85,7 @@ public class Fetcher<K, V> {
     private final int maxWaitMs;
     private final int fetchSize;
     private final long retryBackoffMs;
-    private final int maxPollRecords;
+    private final int maxPollRecords;  // 每次从本地缓存区poll的最大条数
     private final boolean checkCrcs;
     private final Metadata metadata;
     private final FetchManagerMetrics sensors;
@@ -151,7 +151,7 @@ public class Fetcher<K, V> {
             final FetchRequest request = fetchEntry.getValue();
             final Node fetchTarget = fetchEntry.getKey();
 
-            client.send(fetchTarget, ApiKeys.FETCH, request)
+            client.send(fetchTarget, ApiKeys.FETCH, request) //
                     .addListener(new RequestFutureListener<ClientResponse>() {
                         @Override
                         public void onSuccess(ClientResponse resp) {
@@ -443,13 +443,13 @@ public class Fetcher<K, V> {
         } else {
             // note that the consumed position should always be available as long as the partition is still assigned
             long position = subscriptions.position(partitionRecords.partition);
-            if (!subscriptions.isFetchable(partitionRecords.partition)) {
+            if (!subscriptions.isFetchable(partitionRecords.partition)) { // partition 无效了
                 // this can happen when a partition is paused before fetched records are returned to the consumer's poll call
                 log.debug("Not returning fetched records for assigned partition {} since it is no longer fetchable", partitionRecords.partition);
             } else if (partitionRecords.fetchOffset == position) {
                 // we are ensured to have at least one record since we already checked for emptiness
                 List<ConsumerRecord<K, V>> partRecords = partitionRecords.take(maxRecords);
-                long nextOffset = partRecords.get(partRecords.size() - 1).offset() + 1;
+                long nextOffset = partRecords.get(partRecords.size() - 1).offset() + 1; // 这里返回的是下一条的offset
 
                 log.trace("Returning fetched records at offset {} for assigned partition {} and update " +
                         "position to {}", position, partitionRecords.partition, nextOffset);
@@ -462,7 +462,7 @@ public class Fetcher<K, V> {
                     records.addAll(partRecords);
                 }
 
-                subscriptions.position(partitionRecords.partition, nextOffset);
+                subscriptions.position(partitionRecords.partition, nextOffset); // 更新consumer offset，所谓consumer offset 即是已经拉取下来的消息
                 return partRecords.size();
             } else {
                 // these records aren't next in line based on the last consumed position, ignore them
@@ -659,7 +659,7 @@ public class Fetcher<K, V> {
         Errors error = Errors.forCode(partition.errorCode);
 
         try {
-            if (!subscriptions.isFetchable(tp)) {
+            if (!subscriptions.isFetchable(tp)) { // 判断本地的partition状态是否正常
                 // this can happen when a rebalance happened or a partition consumption paused
                 // while fetch is still in-flight
                 log.debug("Ignoring fetched records for partition {} since it is no longer fetchable", tp);
@@ -667,19 +667,19 @@ public class Fetcher<K, V> {
                 // we are interested in this fetch only if the beginning offset matches the
                 // current consumed position
                 Long position = subscriptions.position(tp);
-                if (position == null || position != fetchOffset) {
+                if (position == null || position != fetchOffset) { // offset的位置没有连接上
                     log.debug("Discarding stale fetch response for partition {} since its offset {} does not match " +
                             "the expected offset {}", tp, fetchOffset, position);
                     return null;
                 }
 
                 ByteBuffer buffer = partition.recordSet;
-                MemoryRecords records = MemoryRecords.readableRecords(buffer);
+                MemoryRecords records = MemoryRecords.readableRecords(buffer); // recode序列化拜编码
                 List<ConsumerRecord<K, V>> parsed = new ArrayList<>();
                 for (LogEntry logEntry : records) {
                     // Skip the messages earlier than current position.
-                    if (logEntry.offset() >= position) {
-                        parsed.add(parseRecord(tp, logEntry));
+                    if (logEntry.offset() >= position) { // 这里应该大于不是">=" 才对吧，应position是已经消费过的位置
+                        parsed.add(parseRecord(tp, logEntry)); // 返回ConsumerRecode对象
                         bytes += logEntry.size();
                     }
                 }
@@ -736,7 +736,7 @@ public class Fetcher<K, V> {
     private ConsumerRecord<K, V> parseRecord(TopicPartition partition, LogEntry logEntry) {
         Record record = logEntry.record();
 
-        if (this.checkCrcs) {
+        if (this.checkCrcs) { // crc32算法校验数据是否正确
             try {
                 record.ensureValid();
             } catch (InvalidRecordException e) {
@@ -746,15 +746,16 @@ public class Fetcher<K, V> {
         }
 
         try {
+            // 反序列化成Recode对象
             long offset = logEntry.offset();
             long timestamp = record.timestamp();
             TimestampType timestampType = record.timestampType();
             ByteBuffer keyBytes = record.key();
             byte[] keyByteArray = keyBytes == null ? null : Utils.toArray(keyBytes);
-            K key = keyBytes == null ? null : this.keyDeserializer.deserialize(partition.topic(), keyByteArray);
+            K key = keyBytes == null ? null : this.keyDeserializer.deserialize(partition.topic(), keyByteArray); // 反序列化key
             ByteBuffer valueBytes = record.value();
             byte[] valueByteArray = valueBytes == null ? null : Utils.toArray(valueBytes);
-            V value = valueBytes == null ? null : this.valueDeserializer.deserialize(partition.topic(), valueByteArray);
+            V value = valueBytes == null ? null : this.valueDeserializer.deserialize(partition.topic(), valueByteArray); // 反序列化value
 
             return new ConsumerRecord<>(partition.topic(), partition.partition(), offset,
                                         timestamp, timestampType, record.checksum(),
@@ -773,7 +774,7 @@ public class Fetcher<K, V> {
         private List<ConsumerRecord<K, V>> records;
 
         public PartitionRecords(long fetchOffset, TopicPartition partition, List<ConsumerRecord<K, V>> records) {
-            this.fetchOffset = fetchOffset;
+            this.fetchOffset = fetchOffset; // 开始offset位置，也是上次消费过的位置
             this.partition = partition;
             this.records = records;
         }
@@ -812,7 +813,7 @@ public class Fetcher<K, V> {
 
     private static class CompletedFetch {
         private final TopicPartition partition;
-        private final long fetchedOffset;
+        private final long fetchedOffset; // offset位置
         private final FetchResponse.PartitionData partitionData;
         private final FetchResponseMetricAggregator metricAggregator;
 

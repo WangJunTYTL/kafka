@@ -52,8 +52,9 @@ public class DefaultPartitioner implements Partitioner {
     public int partition(String topic, Object key, byte[] keyBytes, Object value, byte[] valueBytes, Cluster cluster) {
         List<PartitionInfo> partitions = cluster.partitionsForTopic(topic);
         int numPartitions = partitions.size();
+        // key可以是null，此时计算目标partition，使用一个递增的整数计算
         if (keyBytes == null) {
-            int nextValue = counter.getAndIncrement();
+            int nextValue = counter.getAndIncrement(); // 如果用户未指定key，则使用计数器count
             List<PartitionInfo> availablePartitions = cluster.availablePartitionsForTopic(topic);
             if (availablePartitions.size() > 0) {
                 int part = Utils.toPositive(nextValue) % availablePartitions.size();

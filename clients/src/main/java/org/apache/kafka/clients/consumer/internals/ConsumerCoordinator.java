@@ -88,10 +88,10 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * Initialize the coordination manager.
      */
     public ConsumerCoordinator(ConsumerNetworkClient client,
-                               String groupId,
+                               String groupId, // group
                                int rebalanceTimeoutMs,
                                int sessionTimeoutMs,
-                               int heartbeatIntervalMs,
+                               int heartbeatIntervalMs, // heartbeat
                                List<PartitionAssignor> assignors,
                                Metadata metadata,
                                SubscriptionState subscriptions,
@@ -100,8 +100,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                                Time time,
                                long retryBackoffMs,
                                OffsetCommitCallback defaultOffsetCommitCallback,
-                               boolean autoCommitEnabled,
-                               int autoCommitIntervalMs,
+                               boolean autoCommitEnabled,  // 是否自动提交offset
+                               int autoCommitIntervalMs, // 自动提交的时间周期
                                ConsumerInterceptors<?, ?> interceptors,
                                boolean excludeInternalTopics) {
         super(client,
@@ -209,7 +209,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         Assignment assignment = ConsumerProtocol.deserializeAssignment(assignmentBuffer);
 
         // set the flag to refresh last committed offsets
-        subscriptions.needRefreshCommits();
+        subscriptions.needRefreshCommits(); // 标记 offset需要刷新了
 
         // update partition assignment
         subscriptions.assignFromSubscribed(assignment.partitions());
@@ -261,7 +261,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         }
 
         pollHeartbeat(now);
-        maybeAutoCommitOffsetsAsync(now);
+        maybeAutoCommitOffsetsAsync(now); // 这里会提交offset
     }
 
     /**
@@ -405,7 +405,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         // we do not need to re-enable wakeups since we are closing already
         client.disableWakeups();
         try {
-            maybeAutoCommitOffsetsSync();
+            maybeAutoCommitOffsetsSync(); // 关闭前先提交下本地的offset
         } finally {
             super.close();
         }
@@ -417,7 +417,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             OffsetCommitCompletion completion = completedOffsetCommits.poll();
             if (completion == null)
                 break;
-            completion.invoke();
+            completion.invoke(); //执行callback
         }
     }
 
@@ -512,10 +512,10 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     }
 
     private void maybeAutoCommitOffsetsAsync(long now) {
-        if (autoCommitEnabled) {
+        if (autoCommitEnabled) { // 这里必须设置为自动提交
             if (coordinatorUnknown()) {
                 this.nextAutoCommitDeadline = now + retryBackoffMs;
-            } else if (now >= nextAutoCommitDeadline) {
+            } else if (now >= nextAutoCommitDeadline) { // 判断当前的时间是否到了提交的时间
                 this.nextAutoCommitDeadline = now + autoCommitIntervalMs;
                 doAutoCommitOffsetsAsync();
             }

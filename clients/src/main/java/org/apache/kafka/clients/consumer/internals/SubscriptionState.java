@@ -63,7 +63,7 @@ public class SubscriptionState {
     private Pattern subscribedPattern;
 
     /* the list of topics the user has requested */
-    private Set<String> subscription;
+    private Set<String> subscription; // 订阅的topic列表
 
     /* the list of topics the group has subscribed to (set only for the leader on join group completion) */
     private final Set<String> groupSubscription;
@@ -256,6 +256,7 @@ public class SubscriptionState {
         return state;
     }
 
+    //设置一个partition已提交的offset
     public void committed(TopicPartition tp, OffsetAndMetadata offset) {
         assignedState(tp).committed(offset);
     }
@@ -305,7 +306,7 @@ public class SubscriptionState {
         return assignedState(tp).position;
     }
 
-    public Map<TopicPartition, OffsetAndMetadata> allConsumed() {
+    public Map<TopicPartition, OffsetAndMetadata> allConsumed() { // 该方法取得的是已经消费过的recode
         Map<TopicPartition, OffsetAndMetadata> allConsumed = new HashMap<>();
         for (PartitionStates.PartitionState<TopicPartitionState> state : assignment.partitionStates()) {
             if (state.value().hasValidPosition())

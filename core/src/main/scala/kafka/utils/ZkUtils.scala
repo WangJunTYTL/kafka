@@ -44,7 +44,7 @@ object ZkUtils {
   val ClusterIdPath = "/cluster/id"
   val BrokerIdsPath = "/brokers/ids"
   val BrokerTopicsPath = "/brokers/topics"
-  val ControllerPath = "/controller"
+  val ControllerPath = "/controller"   // 负责leader选举
   val ControllerEpochPath = "/controller_epoch"
   val ReassignPartitionsPath = "/admin/reassign_partitions"
   val DeleteTopicsPath = "/admin/delete_topics"

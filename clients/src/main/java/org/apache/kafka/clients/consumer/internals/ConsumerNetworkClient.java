@@ -97,10 +97,10 @@ public class ConsumerNetworkClient implements Closeable {
         return send(node, api, ProtoUtils.latestVersion(api.id), request);
     }
 
-    private RequestFuture<ClientResponse> send(Node node,
-                                              ApiKeys api,
-                                              short version,
-                                              AbstractRequest request) {
+    private RequestFuture<ClientResponse> send(Node node, // 目标节点
+                                              ApiKeys api, // 对应api
+                                              short version, // api的版本
+                                              AbstractRequest request) { //
         long now = time.milliseconds();
         RequestFutureCompletionHandler completionHandler = new RequestFutureCompletionHandler();
         RequestHeader header = client.nextRequestHeader(api, version);

@@ -442,13 +442,13 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private Future<RecordMetadata> doSend(ProducerRecord<K, V> record, Callback callback) {
         TopicPartition tp = null;
         try {
-            // first make sure the metadata for the topic is available
+            // first make sure the metadata for the topic is available  验证topic和partition都是正确的
             ClusterAndWaitTime clusterAndWaitTime = waitOnMetadata(record.topic(), record.partition(), maxBlockTimeMs);
-            long remainingWaitMs = Math.max(0, maxBlockTimeMs - clusterAndWaitTime.waitedOnMetadataMs);
+            long remainingWaitMs = Math.max(0, maxBlockTimeMs - clusterAndWaitTime.waitedOnMetadataMs);// 剩余block time
             Cluster cluster = clusterAndWaitTime.cluster;
             byte[] serializedKey;
             try {
-                serializedKey = keySerializer.serialize(record.topic(), record.key());
+                serializedKey = keySerializer.serialize(record.topic(), record.key()); // key 序列化
             } catch (ClassCastException cce) {
                 throw new SerializationException("Can't convert key of class " + record.key().getClass().getName() +
                         " to class " + producerConfig.getClass(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG).getName() +
@@ -463,13 +463,19 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                         " specified in value.serializer");
             }
 
-            int partition = partition(record, serializedKey, serializedValue, cluster); // 计算消息对应的partition
-            int serializedSize = Records.LOG_OVERHEAD + Record.recordSize(serializedKey, serializedValue); // 消息转成字节数组后数组大小
-            ensureValidRecordSize(serializedSize); // 验证消息大小是否超过限制
+            // 计算消息对应的partition
+            int partition = partition(record, serializedKey, serializedValue, cluster);
+            // 消息转成字节数组后数组大小
+            int serializedSize = Records.LOG_OVERHEAD + Record.recordSize(serializedKey, serializedValue);
+            // 验证消息大小是否超过限制
+            ensureValidRecordSize(serializedSize);
+
             tp = new TopicPartition(record.topic(), partition);
-            long timestamp = record.timestamp() == null ? time.milliseconds() : record.timestamp(); // 消息的时间
+            // 消息发送时间
+            long timestamp = record.timestamp() == null ? time.milliseconds() : record.timestamp();
             log.trace("Sending record {} with callback {} to topic {} partition {}", record, callback, record.topic(), partition);
             // producer callback will make sure to call both 'callback' and interceptor callback
+            // 回调函数
             Callback interceptCallback = this.interceptors == null ? callback : new InterceptorCallback<>(callback, this.interceptors, tp);
             // 这里是把消息放入到本地缓存区
             RecordAccumulator.RecordAppendResult result = accumulator.append(tp, timestamp, serializedKey, serializedValue, interceptCallback, remainingWaitMs);
@@ -478,7 +484,8 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 log.trace("Waking up the sender since topic {} partition {} is either full or getting a new batch", record.topic(), partition);
                 this.sender.wakeup();
             }
-            return result.future; // 这里立刻返回，不会阻塞
+            // 这里立刻返回，不会阻塞，该方法总是立刻返回，如果需要阻塞，可以调用future.get()
+            return result.future;
             // handling exceptions and record the errors;
             // for API exceptions return them in the future,
             // for other exceptions throw directly
