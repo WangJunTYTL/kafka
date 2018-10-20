@@ -510,7 +510,8 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     private final Time time;
     private final ConsumerNetworkClient client; // 处理网络IO
     private final Metrics metrics;
-    private final SubscriptionState subscriptions; // Consumer状态维护：topic、partition、offset
+    // Consumer状态维护：topic、partition、offset
+    private final SubscriptionState subscriptions;
     private final Metadata metadata;
     private final long retryBackoffMs;
     private final long requestTimeoutMs; // 请求超时时间
@@ -637,9 +638,10 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                 this.valueDeserializer = valueDeserializer;
             }
             ClusterResourceListeners clusterResourceListeners = configureClusterResourceListeners(keyDeserializer, valueDeserializer, reporters, interceptorList);
+            // metadata 维护一些信息到本地
             this.metadata = new Metadata(retryBackoffMs, config.getLong(ConsumerConfig.METADATA_MAX_AGE_CONFIG), false, clusterResourceListeners);
             List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(config.getList(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG));
-            this.metadata.update(Cluster.bootstrap(addresses), 0); // 服务端地址
+            this.metadata.update(Cluster.bootstrap(addresses), 0);
             String metricGrpPrefix = "consumer";
             ChannelBuilder channelBuilder = ClientUtils.createChannelBuilder(config.values());
             NetworkClient netClient = new NetworkClient(
@@ -653,11 +655,15 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG), time);
             this.client = new ConsumerNetworkClient(netClient, metadata, time, retryBackoffMs,
                     config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG));
+            // 设置需要重置offset时采用的策略：最近offset、最远offset，无
             OffsetResetStrategy offsetResetStrategy = OffsetResetStrategy.valueOf(config.getString(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG).toUpperCase(Locale.ROOT));
+            // 订阅topic信息维护
             this.subscriptions = new SubscriptionState(offsetResetStrategy);
+            // consumer partition 如 rebalance 策略
             List<PartitionAssignor> assignors = config.getConfiguredInstances(
                     ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG,
                     PartitionAssignor.class);
+            // consumer coordinator 实例，如 rebalance、提交offset
             this.coordinator = new ConsumerCoordinator(this.client,
                     config.getString(ConsumerConfig.GROUP_ID_CONFIG),
                     config.getInt(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG),
@@ -675,6 +681,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     config.getInt(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG),
                     this.interceptors,
                     config.getBoolean(ConsumerConfig.EXCLUDE_INTERNAL_TOPICS_CONFIG));
+            // 负责从server端获取recode数据
             this.fetcher = new Fetcher<>(this.client,
                     config.getInt(ConsumerConfig.FETCH_MIN_BYTES_CONFIG),
                     config.getInt(ConsumerConfig.FETCH_MAX_BYTES_CONFIG),
@@ -968,7 +975,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         try {
             if (timeout < 0)
                 throw new IllegalArgumentException("Timeout must not be negative");
-
+            // 未订阅任何topic报异常
             if (this.subscriptions.hasNoSubscriptionOrUserAssignment()) // 验证是否订阅了响应的topic或是否分配了partition
                 throw new IllegalStateException("Consumer is not subscribed to any topics or assigned any partitions");
 
@@ -976,7 +983,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             long start = time.milliseconds();
             long remaining = timeout;
             do {
-                // 到服务端拉取一次数据
+                // 获取recode数据，会先到本地buffer区获取，如果没有则请求server端后去
                 Map<TopicPartition, List<ConsumerRecord<K, V>>> records = pollOnce(remaining);
                 if (!records.isEmpty()) {
                     // before returning the fetched records, we can send off the next round of fetches
@@ -985,11 +992,13 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     //
                     // NOTE: since the consumed position has already been updated, we must not allow
                     // wakeups or any other errors to be triggered prior to returning the fetched records.
-                    fetcher.sendFetches(); // 非阻塞 在把数据返回前，继续下一次数据拉取，这样可以保证本地buffer的数据总是充足的，不会因为拉取数据阻塞用户对数据的处理
+                    // 非阻塞调用  提前准备下一批数据，这样可以保证本地buffer的数据总是充足的，不会因为拉取数据阻塞用户对数据的处理
+                    fetcher.sendFetches();
                     client.pollNoWakeup();
 
                     if (this.interceptors == null)
-                        return new ConsumerRecords<>(records); // 一次拉取消息后，会返回很多消息，这里是一个消息的集合
+                        // 一次拉取消息后，会返回很多消息，这里是一个消息的集合
+                        return new ConsumerRecords<>(records);
                     else
                         return this.interceptors.onConsume(new ConsumerRecords<>(records));
                 }
@@ -1011,20 +1020,24 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * @return The fetched records (may be empty)
      */
     private Map<TopicPartition, List<ConsumerRecord<K, V>>> pollOnce(long timeout) {
-        coordinator.poll(time.milliseconds()); // 这里是做什么 ，提交offset
+        // 每次poll之前，提交offset，并在offset提交后回调callback
+        coordinator.poll(time.milliseconds());
 
         // fetch positions if we have partitions we're subscribed to that we
         // don't know the offset for
-        if (!subscriptions.hasAllFetchPositions()) // 如果未获取到partition的offset，重置partition的offset
+        // 如果未获取到目标partition的消费offset，则重置partition的offset，重置策略分为几种情况
+        if (!subscriptions.hasAllFetchPositions())
             updateFetchPositions(this.subscriptions.missingFetchPositions());
 
         // if data is available already, return it immediately
+        // 从本地获取数据
         Map<TopicPartition, List<ConsumerRecord<K, V>>> records = fetcher.fetchedRecords();
         if (!records.isEmpty())
             return records;
 
         // send any new fetches (won't resend pending fetches)
-        fetcher.sendFetches(); // 本地buffer没有数据，需要向服务端请求数据
+        // 本地buffer没有数据，向服务端请求Recode数据
+        fetcher.sendFetches();
 
         long now = time.milliseconds();
         long pollTimeout = Math.min(coordinator.timeToNextPoll(now), timeout);
@@ -1522,8 +1535,10 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         // case if the user called seekToBeginning or seekToEnd. We do this check first to
         // avoid an unnecessary lookup of committed offsets (which typically occurs when
         // the user is manually assigning partitions and managing their own offsets).
+        // 如果user已经指定了需要重置offset，则先按照指定的重置策略去重置
         fetcher.resetOffsetsIfNeeded(partitions);
 
+        // 如果未指定需要重置offset，则从服务端获取offset
         if (!subscriptions.hasAllFetchPositions()) {
             // if we still don't have offsets for all partitions, then we should either seek
             // to the last committed position or reset using the auto reset policy
@@ -1532,6 +1547,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             coordinator.refreshCommittedOffsetsIfNeeded();
 
             // then do any offset lookups in case some positions are not known
+            // 如果服务端没有记录offset，则采用默认策略去获取offset
             fetcher.updateFetchPositions(partitions);
         }
     }

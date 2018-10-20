@@ -24,6 +24,7 @@ public interface Records extends Iterable<LogEntry> {
 
     int SIZE_LENGTH = 4;
     int OFFSET_LENGTH = 8;
+    // 消息在序列化是需要记录消息的字节大小(4byte)offset(8byte)
     int LOG_OVERHEAD = SIZE_LENGTH + OFFSET_LENGTH;
 
     /**

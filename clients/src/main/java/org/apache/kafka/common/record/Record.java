@@ -154,6 +154,7 @@ public final class Record {
         }
     }
 
+    // 数据序列化方式
     public static void write(Compressor compressor, long crc, byte attributes, long timestamp, byte[] key, byte[] value, int valueOffset, int valueSize) {
         // write crc
         compressor.putInt((int) (crc & 0xffffffffL));
@@ -180,10 +181,12 @@ public final class Record {
         }
     }
 
+    // 计算消息序列化后占用字节大小
     public static int recordSize(byte[] key, byte[] value) {
         return recordSize(key == null ? 0 : key.length, value == null ? 0 : value.length);
     }
 
+    // 所有的
     public static int recordSize(int keySize, int valueSize) {
         return CRC_LENGTH + MAGIC_LENGTH + ATTRIBUTE_LENGTH + TIMESTAMP_LENGTH + KEY_SIZE_LENGTH + keySize + VALUE_SIZE_LENGTH + valueSize;
     }

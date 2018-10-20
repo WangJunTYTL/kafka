@@ -55,9 +55,21 @@ public class RangeAssignor extends AbstractPartitionAssignor {
         return res;
     }
 
+    /**
+     *  参数partitionsPerTopic是描述topic下partition列表
+     *  参数subscriptions是描述每个consumer实例订阅的topic列表
+     *
+     *  返回assignment是描述最终每个consumer分配的partition列表
+     *
+     * @param partitionsPerTopic The number of partitions for each subscribed topic. Topics not in metadata will be excluded
+     *                           from this map.
+     * @param subscriptions Map from the memberId to their respective topic subscription
+     * @return
+     */
     @Override
     public Map<String, List<TopicPartition>> assign(Map<String, Integer> partitionsPerTopic,
                                                     Map<String, List<String>> subscriptions) {
+        // 每个topic订阅的consumer集合
         Map<String, List<String>> consumersPerTopic = consumersPerTopic(subscriptions);
         Map<String, List<TopicPartition>> assignment = new HashMap<>();
         for (String memberId : subscriptions.keySet())
@@ -67,13 +79,16 @@ public class RangeAssignor extends AbstractPartitionAssignor {
             String topic = topicEntry.getKey();
             List<String> consumersForTopic = topicEntry.getValue();
 
+            // 指定topic下的partition数目
             Integer numPartitionsForTopic = partitionsPerTopic.get(topic);
             if (numPartitionsForTopic == null)
                 continue;
-
+            // topic排序
             Collections.sort(consumersForTopic);
 
+            // 目标topic的partition总数 除以 订阅该topic的consumer总数 得出每个consumer可以分配的partition数目
             int numPartitionsPerConsumer = numPartitionsForTopic / consumersForTopic.size();
+            // 无法均分，得出余数
             int consumersWithExtraPartition = numPartitionsForTopic % consumersForTopic.size();
 
             List<TopicPartition> partitions = AbstractPartitionAssignor.partitions(topic, numPartitionsForTopic);

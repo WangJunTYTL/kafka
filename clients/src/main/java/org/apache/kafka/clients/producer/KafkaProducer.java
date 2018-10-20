@@ -132,21 +132,34 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private static final AtomicInteger PRODUCER_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
     private static final String JMX_PREFIX = "kafka.producer";
 
+    // kafka client id，唯一标识一个client实例
     private String clientId;
-    private final Partitioner partitioner; // 维护partition信息，该信息应该是从server中获取
+    // 维护partition信息，该信息应该是从server中获取
+    private final Partitioner partitioner;
+    // 请求体最大字节
     private final int maxRequestSize;
+    // 本地消息缓存区最大占用内存空间
     private final long totalMemorySize;
+    // 本地信息维护，比如Topic、Partition信息，这些信息会从Server获取，如果需要更新将会重新请求server然后更新到本地
     private final Metadata metadata;
-    private final RecordAccumulator accumulator; // 本地消息缓存区
-    private final Sender sender; // 负责发送消息到server
+    // 本地消息缓存区,调用消息发送API会先发送到本地消息缓存区
+    private final RecordAccumulator accumulator;
+    // 负责producer异步发送消息到server，kafka的消息均采用异步方式处理
+    private final Sender sender;
     private final Metrics metrics;
+    // background i/o 主要用于发送消息到server端的线程对象
     private final Thread ioThread;
-    private final CompressionType compressionType; // 消息内容压缩类型
+    // Recode消息压缩方式 gzip、snappy、lz4
+    private final CompressionType compressionType;
     private final Sensor errors;
     private final Time time;
+    // key序列化实现类
     private final Serializer<K> keySerializer;
+    // value序列化实现类
     private final Serializer<V> valueSerializer;
+    // 消息发送配置
     private final ProducerConfig producerConfig;
+    // 发送消息时最大阻塞时间
     private final long maxBlockTimeMs;
     private final int requestTimeoutMs;
     private final ProducerInterceptors<K, V> interceptors; // 为用户提供一些消息发送前后阶段的处理
@@ -209,7 +222,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             Map<String, Object> userProvidedConfigs = config.originals();
             this.producerConfig = config;
             this.time = new SystemTime();
-
+            // clientId 设置，标识唯一的一个kafka client 实例
             clientId = config.getString(ProducerConfig.CLIENT_ID_CONFIG);
             if (clientId.length() <= 0)
                 // 一个客户端可以启动多个Client，作者建议启动一个就可以，单线程比多线程快
@@ -223,7 +236,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     MetricsReporter.class);
             reporters.add(new JmxReporter(JMX_PREFIX));
             this.metrics = new Metrics(metricConfig, reporters, time);
+            // 用于路由消息到目标partition的逻辑类
             this.partitioner = config.getConfiguredInstance(ProducerConfig.PARTITIONER_CLASS_CONFIG, Partitioner.class);
+            // 如果消息发送失败，可重试次数
             long retryBackoffMs = config.getLong(ProducerConfig.RETRY_BACKOFF_MS_CONFIG);
             if (keySerializer == null) {
                 this.keySerializer = config.getConfiguredInstance(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
@@ -299,6 +314,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     time);
 
             List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(config.getList(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG));
+            // 更新本地维护信息
             this.metadata.update(Cluster.bootstrap(addresses), time.milliseconds());
             ChannelBuilder channelBuilder = ClientUtils.createChannelBuilder(config.values());
             NetworkClient client = new NetworkClient(
@@ -321,6 +337,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     new SystemTime(),
                     this.requestTimeoutMs);
             String ioThreadName = "kafka-producer-network-thread" + (clientId.length() > 0 ? " | " + clientId : "");
+            // 用于异步发送消息到server端
             this.ioThread = new KafkaThread(ioThreadName, this.sender, true);
             this.ioThread.start();
 
@@ -442,10 +459,13 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private Future<RecordMetadata> doSend(ProducerRecord<K, V> record, Callback callback) {
         TopicPartition tp = null;
         try {
-            // first make sure the metadata for the topic is available  验证topic和partition都是正确的
+            // first make sure the metadata for the topic is available
+            // 验证topic和partition是正确的且是可用的
             ClusterAndWaitTime clusterAndWaitTime = waitOnMetadata(record.topic(), record.partition(), maxBlockTimeMs);
+            // 计算剩余block时间，因为消息放入到本地缓存区时，本地缓存区有可能空间不足，也会阻塞调用
             long remainingWaitMs = Math.max(0, maxBlockTimeMs - clusterAndWaitTime.waitedOnMetadataMs);// 剩余block time
             Cluster cluster = clusterAndWaitTime.cluster;
+            // 序列化key，拿到序列化后的字节数据
             byte[] serializedKey;
             try {
                 serializedKey = keySerializer.serialize(record.topic(), record.key()); // key 序列化
@@ -454,6 +474,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                         " to class " + producerConfig.getClass(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG).getName() +
                         " specified in key.serializer");
             }
+            // 序列化value，拿到序列化后的字节数据
             byte[] serializedValue;
             try {
                 serializedValue = valueSerializer.serialize(record.topic(), record.value());
@@ -463,9 +484,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                         " specified in value.serializer");
             }
 
-            // 计算消息对应的partition
+            // 计算recode应该被发送的目标partition
             int partition = partition(record, serializedKey, serializedValue, cluster);
-            // 消息转成字节数组后数组大小
+            // 计算recode占用的字节大小，这里不仅仅包括key和value的，还有内部字段，如offset、keyLength、valueLength、crc、attributes、magic
             int serializedSize = Records.LOG_OVERHEAD + Record.recordSize(serializedKey, serializedValue);
             // 验证消息大小是否超过限制
             ensureValidRecordSize(serializedSize);
@@ -475,13 +496,15 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             long timestamp = record.timestamp() == null ? time.milliseconds() : record.timestamp();
             log.trace("Sending record {} with callback {} to topic {} partition {}", record, callback, record.topic(), partition);
             // producer callback will make sure to call both 'callback' and interceptor callback
-            // 回调函数
+            // 回调函数，消息发送成功后(成功是指发送到server端之后)。这里也可以设置interceptor，在执行callback时，interceptor也会被调用
             Callback interceptCallback = this.interceptors == null ? callback : new InterceptorCallback<>(callback, this.interceptors, tp);
-            // 这里是把消息放入到本地缓存区
+            // 这里是把消息放入到本地缓存区，本地缓存区是一块固定内存大小的区域，当消息占用字节大小超过本地消息缓存区大小时，将会阻塞user调用，这里阻塞时间为remainingWaitMs
+            // 消息缓存区的消息将被sender异步发送
             RecordAccumulator.RecordAppendResult result = accumulator.append(tp, timestamp, serializedKey, serializedValue, interceptCallback, remainingWaitMs);
             // 假如本地发送消息缓冲区是满的，则唤醒发送线程向server发送消息
             if (result.batchIsFull || result.newBatchCreated) {
                 log.trace("Waking up the sender since topic {} partition {} is either full or getting a new batch", record.topic(), partition);
+                // 唤醒sender异步发送本地buffer内的消息到服务端
                 this.sender.wakeup();
             }
             // 这里立刻返回，不会阻塞，该方法总是立刻返回，如果需要阻塞，可以调用future.get()
@@ -537,7 +560,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         // or within the known partition range
         if (partitionsCount != null && (partition == null || partition < partitionsCount))
             return new ClusterAndWaitTime(cluster, 0);
-
+        // 拿不到指定partition的数目，说明本地维护的信息需要更新
         long begin = time.milliseconds();
         long remainingWaitMs = maxWaitMs;
         long elapsed;
@@ -547,14 +570,18 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         // is stale and the number of partitions for this topic has increased in the meantime.
         do {
             log.trace("Requesting metadata update for topic {}.", topic);
+            // 当前本地维护的信息version
             int version = metadata.requestUpdate();
+            // sender 循环执行，发送消息，会更改metadata数据
             sender.wakeup();
             try {
+                // 等待metadata数据更新，如果在限制的时间内未更新，将会扔出Timeout异常
                 metadata.awaitUpdate(version, remainingWaitMs);
             } catch (TimeoutException ex) {
                 // Rethrow with original maxWaitMs to prevent logging exception with remainingWaitMs
                 throw new TimeoutException("Failed to update metadata after " + maxWaitMs + " ms.");
             }
+            // 如果更新成功，再一次获取Partition的数目
             cluster = metadata.fetch();
             elapsed = time.milliseconds() - begin;
             if (elapsed >= maxWaitMs)

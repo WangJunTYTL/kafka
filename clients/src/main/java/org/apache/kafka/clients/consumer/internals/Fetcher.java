@@ -339,9 +339,11 @@ public class Fetcher<K, V> {
             throw new NoOffsetForPartitionException(partition);
 
         log.debug("Resetting offset for partition {} to {} offset.", partition, strategy.name().toLowerCase(Locale.ROOT));
+        // 去服务端请求offset位置
         long offset = getOffsetsByTimes(Collections.singletonMap(partition, timestamp), Long.MAX_VALUE).get(partition).offset();
 
         // we might lose the assignment while fetching the offset, so check it is still active
+        // 设置到本地
         if (subscriptions.isAssigned(partition))
             this.subscriptions.seek(partition, offset);
     }

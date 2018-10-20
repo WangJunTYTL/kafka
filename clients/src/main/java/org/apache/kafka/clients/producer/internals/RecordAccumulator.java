@@ -169,8 +169,9 @@ public final class RecordAccumulator {
         appendsInProgress.incrementAndGet(); // 写入消息时需要先++，写入成功后还会--
         try {
             // check if we have an in-progress batch
-            // 获取当前目标partition对应的消息缓存区(Deque)，这里每个partition都会有一个对应的queue
+            // 获取当前目标partition对应的消息缓存区(Deque)，这里每个partition都会有一个对应的queue,加入是第一次获取目标partition对应的queue，则新建一个ArrayQueue
             Deque<RecordBatch> dq = getOrCreateDeque(tp);
+            // 保证消息追加是线程安全
             synchronized (dq) {
                 if (closed)
                     throw new IllegalStateException("Cannot send after the producer is closed.");
@@ -189,19 +190,20 @@ public final class RecordAccumulator {
                 // Need to check if producer is closed again after grabbing the dequeue lock.
                 if (closed)
                     throw new IllegalStateException("Cannot send after the producer is closed.");
-
+                // 将消息放入到本地消息缓存区，如果放入失败(失败的可能情况是RecodeBatch数据已经满了)则返回null
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, callback, dq);
                 if (appendResult != null) {
                     // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
                     free.deallocate(buffer);
                     return appendResult;
                 }
+                //  如果RecodeBatch已经满了，那就在新建一个RecodeBatch，一个RecodeBatch代表Sender一次发送请求发送的一批打包数据
                 MemoryRecords records = MemoryRecords.emptyRecords(buffer, compression, this.batchSize);
                 // 新创建一个消息段集合，消息段集合一个消息集合，当集合达到设定的大小时，消息会被发送到服务端
                 RecordBatch batch = new RecordBatch(tp, records, time.milliseconds());
                 FutureRecordMetadata future = Utils.notNull(batch.tryAppend(timestamp, key, value, callback, time.milliseconds()));
-
-                dq.addLast(batch); // 消息写入
+                // 将RecodeBatch放入到队列
+                dq.addLast(batch);
                 incomplete.add(batch); // 存放还没有被ack的消息
 
                 // 这里dp.size > 1 会导致消息集合立马就是满的啊？ TODO
@@ -223,7 +225,7 @@ public final class RecordAccumulator {
         if (last != null) {
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, callback, time.milliseconds());
             if (future == null)
-                // 该消息没有被写入
+                // 该消息没有被写入，说明已经完成了一批recode(batch),可以把batch的状态置为close
                 last.records.close();
             else
                 // TODO 这里队列长度为1时，为什么batchIsFull就等于full
@@ -315,12 +317,14 @@ public final class RecordAccumulator {
         Set<String> unknownLeaderTopics = new HashSet<>();
 
         boolean exhausted = this.free.queued() > 0;
+        // 遍历每一个partition获取对应的leader
         for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : this.batches.entrySet()) {
             TopicPartition part = entry.getKey();
             Deque<RecordBatch> deque = entry.getValue();
-
+            // 目标partition对应的leader节点
             Node leader = cluster.leaderFor(part);
             synchronized (deque) {
+                // 目标partition没有对应的leader，先将topic归到unknownLeaderTopics集合下，做个标记
                 if (leader == null && !deque.isEmpty()) {
                     // This is a partition for which leader is not known, but messages are available to send.
                     // Note that entries are currently not removed from batches when deque is empty.
@@ -328,19 +332,23 @@ public final class RecordAccumulator {
                 } else if (!readyNodes.contains(leader) && !muted.contains(part)) {
                     RecordBatch batch = deque.peekFirst();
                     if (batch != null) {
+                        // 针对重试发送的RecodeBatch处理，重试有时间间隔
                         boolean backingOff = batch.attempts > 0 && batch.lastAttemptMs + retryBackoffMs > nowMs;
                         long waitedTimeMs = nowMs - batch.lastAttemptMs;
                         long timeToWaitMs = backingOff ? retryBackoffMs : lingerMs;
                         long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0);
+                        // 队列中是否有recode数据
                         boolean full = deque.size() > 1 || batch.records.isFull();
                         boolean expired = waitedTimeMs >= timeToWaitMs;
                         boolean sendable = full || expired || exhausted || closed || flushInProgress();
                         if (sendable && !backingOff) {
+                            // 消息需要发送到leader节点，这个集合涵盖每一个partition对应的leader节点
                             readyNodes.add(leader);
                         } else {
                             // Note that this results in a conservative estimate since an un-sendable partition may have
                             // a leader that will later be found to have sendable data. However, this is good enough
                             // since we'll just wake up and then sleep again for the remaining time.
+                            // 该RecordBatch下次发送重试时间
                             nextReadyCheckDelayMs = Math.min(timeLeftMs, nextReadyCheckDelayMs);
                         }
                     }
@@ -381,15 +389,17 @@ public final class RecordAccumulator {
                                                  long now) {
         if (nodes.isEmpty())
             return Collections.emptyMap();
-
+        // 记录每一个leader节点需要发送的目标数据
         Map<Integer, List<RecordBatch>> batches = new HashMap<>();
         for (Node node : nodes) {
             int size = 0;
+            // 拿到目标partition的leader是该节点的partition列表，此时数据还在本地缓存区，并不会移除
             List<PartitionInfo> parts = cluster.partitionsForNode(node.id());
             List<RecordBatch> ready = new ArrayList<>();
             /* to make starvation less likely this loop doesn't start at 0 */
             int start = drainIndex = drainIndex % parts.size();
             do {
+                // 保证每次获取的partition不是同一个
                 PartitionInfo part = parts.get(drainIndex);
                 TopicPartition tp = new TopicPartition(part.topic(), part.partition());
                 // Only proceed if the partition has no in-flight batches.
@@ -434,6 +444,7 @@ public final class RecordAccumulator {
      * Get the deque for the given topic-partition, creating it if necessary.
      */
     private Deque<RecordBatch> getOrCreateDeque(TopicPartition tp) {
+        // 获取目标partition对应的集合队列
         Deque<RecordBatch> d = this.batches.get(tp);
         if (d != null)
             return d;
@@ -567,8 +578,11 @@ public final class RecordAccumulator {
         public final Set<String> unknownLeaderTopics;
 
         public ReadyCheckResult(Set<Node> readyNodes, long nextReadyCheckDelayMs, Set<String> unknownLeaderTopics) {
+            // 消息将被发送的节点
             this.readyNodes = readyNodes;
+            // 下次发送重试时间
             this.nextReadyCheckDelayMs = nextReadyCheckDelayMs;
+            // 目标partition还不知道对应的leader，把对应的topic标记为没有leader
             this.unknownLeaderTopics = unknownLeaderTopics;
         }
     }

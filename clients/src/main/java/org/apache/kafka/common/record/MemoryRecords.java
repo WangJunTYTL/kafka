@@ -96,8 +96,10 @@ public class MemoryRecords implements Records {
             throw new IllegalStateException("Memory records is not writable");
 
         int size = Record.recordSize(key, value);// 记录消息大小
+        // 消息序列化
         compressor.putLong(offset);
         compressor.putInt(size);
+        //  crc用于校验数据传输是否出现错误
         long crc = compressor.putRecord(timestamp, key, value);
         compressor.recordWritten(size + Records.LOG_OVERHEAD);
         return crc;

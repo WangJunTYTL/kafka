@@ -32,6 +32,8 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
+ * 本地信息维护，比如Topic、Partition信息
+ *
  * A class encapsulating some of the logic around metadata.
  * <p>
  * This class is shared by the client thread (for partitioning) and the background sender thread.
@@ -52,6 +54,7 @@ public final class Metadata {
 
     private final long refreshBackoffMs;
     private final long metadataExpireMs;
+    // version标记本地维护的数据版本，每次去server端请求更新到本地后，version值将增加
     private int version;
     private long lastRefreshMs;
     private long lastSuccessfulRefreshMs;

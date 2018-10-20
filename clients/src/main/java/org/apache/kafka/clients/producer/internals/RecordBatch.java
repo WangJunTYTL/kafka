@@ -29,24 +29,31 @@ import org.slf4j.LoggerFactory;
  * 
  * This class is not thread safe and external synchronization must be used when modifying it
  *
- *
+ * kafka为减少服务端的请求，提高吞吐量，一次发送请求会发送一批recode，一个RecodeBatch代表一批发送数据
  */
 public final class RecordBatch {
 
     private static final Logger log = LoggerFactory.getLogger(RecordBatch.class);
 
+    // 当前批次数据含有的recode个数
     public int recordCount = 0;
     public int maxRecordSize = 0; // TODO
+    // 重试次数
     public volatile int attempts = 0;
     public final long createdMs;
     public long drainedMs;
+    // 上次重试的时间点
     public long lastAttemptMs;
+    // 存放该批次recode序列化之后的字节数据
     public final MemoryRecords records;
+    // 该批次数据对应的目标partition位置
     public final TopicPartition topicPartition;
     public final ProduceRequestResult produceFuture;
+    // RecodeBatch最后一次添加的时间
     public long lastAppendTime;
     private final List<Thunk> thunks;
     private long offsetCounter = 0L;
+    // Mark重试
     private boolean retry;
 
     public RecordBatch(TopicPartition tp, MemoryRecords records, long now) {
@@ -66,12 +73,15 @@ public final class RecordBatch {
      * @return The RecordSend corresponding to this record or null if there isn't sufficient room.
      */
     public FutureRecordMetadata tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, long now) {
-        if (!this.records.hasRoomFor(key, value)) { // 没有空间存放数据了
+        // 该批次是否有空间继续存放数据
+        if (!this.records.hasRoomFor(key, value)) {
             return null;
         } else {
+            // 序列化数据之后放入到MemoryRecords的ByteBuffer中，并返回当前数据的crc码
             long checksum = this.records.append(offsetCounter++, timestamp, key, value);
             this.maxRecordSize = Math.max(this.maxRecordSize, Record.recordSize(key, value));
             this.lastAppendTime = now;
+            // 这里recodeCount代表相对的offset，服务端响应之后，根据该值计算出绝对的offset
             FutureRecordMetadata future = new FutureRecordMetadata(this.produceFuture, this.recordCount,
                                                                    timestamp, checksum,
                                                                    key == null ? -1 : key.length,
@@ -85,6 +95,8 @@ public final class RecordBatch {
 
     /**
      * Complete the request
+     *
+     * Sender发送成功后，将调用该函数，该方法是回调user的callback，通知user消息已发送成功
      * 
      * @param baseOffset The base offset of the messages assigned by the server
      * @param timestamp The timestamp returned by the broker.

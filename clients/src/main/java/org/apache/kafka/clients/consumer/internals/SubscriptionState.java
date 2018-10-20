@@ -52,6 +52,11 @@ public class SubscriptionState {
     private static final String SUBSCRIPTION_EXCEPTION_MESSAGE =
             "Subscription to topics, partitions and pattern are mutually exclusive";
 
+    // 订阅的方式：
+    // auto_topic:指定需要订阅的topic列表
+    // auto_pattern: 指定topic正则模式
+    // user_assigned: 用户指定topic和Partition
+    // 订阅模式指定后，不允许动态改变
     private enum SubscriptionType {
         NONE, AUTO_TOPICS, AUTO_PATTERN, USER_ASSIGNED
     }
@@ -99,6 +104,7 @@ public class SubscriptionState {
     private void setSubscriptionType(SubscriptionType type) {
         if (this.subscriptionType == SubscriptionType.NONE)
             this.subscriptionType = type;
+        // 订阅的方式确定后，不允许在改变
         else if (this.subscriptionType != type)
             throw new IllegalStateException(SUBSCRIPTION_EXCEPTION_MESSAGE);
     }
@@ -306,7 +312,8 @@ public class SubscriptionState {
         return assignedState(tp).position;
     }
 
-    public Map<TopicPartition, OffsetAndMetadata> allConsumed() { // 该方法取得的是已经消费过的recode
+    // 取得已经消费过的offset位置
+    public Map<TopicPartition, OffsetAndMetadata> allConsumed() {
         Map<TopicPartition, OffsetAndMetadata> allConsumed = new HashMap<>();
         for (PartitionStates.PartitionState<TopicPartitionState> state : assignment.partitionStates()) {
             if (state.value().hasValidPosition())

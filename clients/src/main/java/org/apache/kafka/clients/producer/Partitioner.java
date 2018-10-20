@@ -29,6 +29,11 @@ public interface Partitioner extends Configurable {
     /**
      * Compute the partition for the given record.
      *
+     * 消息路由逻辑，用于计算recode对应的目标partition
+     * 默认策略:hash（key）% num（partition）= 目标partition
+     * user也可以手动指定目标partition
+     * user也可以实现该接口并配置成自己的实现类
+     *
      * @param topic The topic name
      * @param key The key to partition on (or null if no key)
      * @param keyBytes The serialized key to partition on( or null if no key)

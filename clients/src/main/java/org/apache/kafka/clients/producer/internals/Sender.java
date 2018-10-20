@@ -169,9 +169,11 @@ public class Sender implements Runnable {
     void run(long now) {
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
+        // 发送前准备，如哪些Topic还没有leader，RecodeBatch发送的目标节点Leader，下次重试的时间
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
         // if there are any partitions whose leaders are not known yet, force metadata update
+        // 如果一些Topic还有未知的leader，则需要请求server获取最新的维护信息
         if (!result.unknownLeaderTopics.isEmpty()) {
             // The set of topics with unknown leader contains topics with leader election pending as well as
             // topics which may have expired. Add the topic again to metadata to ensure it is included
@@ -186,6 +188,7 @@ public class Sender implements Runnable {
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
             Node node = iter.next();
+            // 验证是否可以发送数据到目标node
             if (!this.client.ready(node, now)) {
                 iter.remove();
                 notReadyTimeout = Math.min(notReadyTimeout, this.client.connectionDelay(node, now));
@@ -193,10 +196,12 @@ public class Sender implements Runnable {
         }
 
         // create produce requests
+        // 计算消息将被发送的节点，消息是要发到到目标partition的leader节点
         Map<Integer, List<RecordBatch>> batches = this.accumulator.drain(cluster,
                                                                          result.readyNodes,
                                                                          this.maxRequestSize,
                                                                          now);
+        // TODO ?
         if (guaranteeMessageOrder) {
             // Mute all the partitions drained
             for (List<RecordBatch> batchList : batches.values()) {
@@ -205,12 +210,14 @@ public class Sender implements Runnable {
             }
         }
 
+        // 验证已过期数据并删除(数据发送的时间已超过设置的超时时间)
         List<RecordBatch> expiredBatches = this.accumulator.abortExpiredBatches(this.requestTimeout, now);
         // update sensors
         for (RecordBatch expiredBatch : expiredBatches)
             this.sensors.recordErrors(expiredBatch.topicPartition.topic(), expiredBatch.recordCount);
 
         sensors.updateProduceRequestMetrics(batches);
+        // 包装成request，这里一个RecodeBatch对应一次请求，为了减少请求时间，等同于一次请求会写入多条recode数据
         List<ClientRequest> requests = createProduceRequests(batches, now);
         // If we have any nodes that are ready to send + have sendable data, poll with 0 timeout so this can immediately
         // loop and try sending more data. Otherwise, the timeout is determined by nodes that have partitions with data
@@ -230,7 +237,8 @@ public class Sender implements Runnable {
         // otherwise if some partition already has some data accumulated but not ready yet,
         // the select time will be the time difference between now and its linger expiry time;
         // otherwise the select time will be the time difference between now and the metadata expiry time;
-        this.client.poll(pollTimeout, now); // 这里才会与服务端通信
+        //
+        this.client.poll(pollTimeout, now);
     }
 
     /**
@@ -298,6 +306,7 @@ public class Sender implements Runnable {
      * @param now The current POSIX time stamp in milliseconds
      */
     private void completeBatch(RecordBatch batch, Errors error, long baseOffset, long timestamp, long correlationId, long now) {
+        // 如果发送失败，则重新放入到queue，进行重试
         if (error != Errors.NONE && canRetry(batch, error)) {
             // retry
             log.warn("Got error produce response with correlation id {} on topic-partition {}, retrying ({} attempts left). Error: {}",
@@ -315,6 +324,7 @@ public class Sender implements Runnable {
                 exception = error.exception();
             // tell the user the result of their request
             batch.done(baseOffset, timestamp, exception);
+            // 释放本地消息缓存空间
             this.accumulator.deallocate(batch);
             if (error != Errors.NONE)
                 this.sensors.recordErrors(batch.topicPartition.topic(), batch.recordCount);
@@ -344,6 +354,7 @@ public class Sender implements Runnable {
     private List<ClientRequest> createProduceRequests(Map<Integer, List<RecordBatch>> collated, long now) {
         List<ClientRequest> requests = new ArrayList<ClientRequest>(collated.size());
         for (Map.Entry<Integer, List<RecordBatch>> entry : collated.entrySet())
+            // 把一批数据打包成一次请求
             requests.add(produceRequest(now, entry.getKey(), acks, requestTimeout, entry.getValue()));
         return requests;
     }
@@ -365,6 +376,7 @@ public class Sender implements Runnable {
                                            request.toStruct());
         RequestCompletionHandler callback = new RequestCompletionHandler() {
             public void onComplete(ClientResponse response) {
+                // 消息发送到server后，回调函数，回调函数主要逻辑有调用user设置的callback，从本地消息缓存区中移除已经发送的消息(RecodeBatch)
                 handleProduceResponse(response, recordsByPartition, time.milliseconds());
             }
         };

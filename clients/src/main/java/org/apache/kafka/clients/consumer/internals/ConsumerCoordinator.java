@@ -64,12 +64,18 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerCoordinator.class);
 
+    //consumer的partition分配逻辑
     private final List<PartitionAssignor> assignors;
     private final Metadata metadata;
     private final ConsumerCoordinatorMetrics sensors;
+    // 订阅Topic、Partition、Offset信息维护
     private final SubscriptionState subscriptions;
+    // offset提交之后回调函数
     private final OffsetCommitCallback defaultOffsetCommitCallback;
+    // 是否开启自动提交offset，如果开启，在poll消息时会先操作提交offset
+    // 如果未开启需要user调用api手动提交
     private final boolean autoCommitEnabled;
+    // offset提交时间间隔
     private final int autoCommitIntervalMs;
     private final ConsumerInterceptors<?, ?> interceptors;
     private final boolean excludeInternalTopics;
@@ -78,6 +84,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     // of offset commit requests, which may be invoked from the heartbeat thread
     private final ConcurrentLinkedQueue<OffsetCommitCompletion> completedOffsetCommits;
 
+    // 当前consumer是否被选举为leader，只有leader才可以执行消费分组的任务
     private boolean isLeader = false;
     private Set<String> joinedSubscription;
     private MetadataSnapshot metadataSnapshot;
@@ -242,6 +249,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @param now current time in milliseconds
      */
     public void poll(long now) {
+        // offset后提交成功后，执行回调函数
         invokeCompletedOffsetCommitCallbacks();
 
         if (subscriptions.partitionsAutoAssigned() && coordinatorUnknown()) {
@@ -261,7 +269,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         }
 
         pollHeartbeat(now);
-        maybeAutoCommitOffsetsAsync(now); // 这里会提交offset
+        // 如果设置自动提交offset，这里会按照间隔的周期提交offset位置
+        maybeAutoCommitOffsetsAsync(now);
     }
 
     /**
@@ -366,6 +375,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      */
     public void refreshCommittedOffsetsIfNeeded() {
         if (subscriptions.refreshCommitsNeeded()) {
+            // 去服务端获取offset
             Map<TopicPartition, OffsetAndMetadata> offsets = fetchCommittedOffsets(subscriptions.assignedPartitions());
             for (Map.Entry<TopicPartition, OffsetAndMetadata> entry : offsets.entrySet()) {
                 TopicPartition tp = entry.getKey();
@@ -417,7 +427,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             OffsetCommitCompletion completion = completedOffsetCommits.poll();
             if (completion == null)
                 break;
-            completion.invoke(); //执行callback
+            //执行callback
+            completion.invoke();
         }
     }
 
@@ -455,9 +466,11 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
     private void doCommitOffsetsAsync(final Map<TopicPartition, OffsetAndMetadata> offsets, final OffsetCommitCallback callback) {
         this.subscriptions.needRefreshCommits();
+        //提交offset
         RequestFuture<Void> future = sendOffsetCommitRequest(offsets);
         final OffsetCommitCallback cb = callback == null ? defaultOffsetCommitCallback : callback;
         future.addListener(new RequestFutureListener<Void>() {
+            // 提交成功
             @Override
             public void onSuccess(Void value) {
                 if (interceptors != null)
@@ -466,6 +479,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                 completedOffsetCommits.add(new OffsetCommitCompletion(cb, offsets, null));
             }
 
+            // 提交失败
             @Override
             public void onFailure(RuntimeException e) {
                 Exception commitException = e;
@@ -512,7 +526,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     }
 
     private void maybeAutoCommitOffsetsAsync(long now) {
-        if (autoCommitEnabled) { // 这里必须设置为自动提交
+        // 这里设置为自动提交,如果手动提交，需要user自己调用API提交offset
+        if (autoCommitEnabled) {
             if (coordinatorUnknown()) {
                 this.nextAutoCommitDeadline = now + retryBackoffMs;
             } else if (now >= nextAutoCommitDeadline) { // 判断当前的时间是否到了提交的时间
@@ -812,6 +827,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     }
 
     private static class OffsetCommitCompletion {
+        // 提交offset后回调函数
         private final OffsetCommitCallback callback;
         private final Map<TopicPartition, OffsetAndMetadata> offsets;
         private final Exception exception;

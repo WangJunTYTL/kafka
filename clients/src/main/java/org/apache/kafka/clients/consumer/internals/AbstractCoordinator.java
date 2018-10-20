@@ -56,7 +56,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
+/**9
  * AbstractCoordinator implements group management for a single group member by interacting with
  * a designated Kafka broker (the coordinator). Group semantics are provided by extending this class.
  * See {@link ConsumerCoordinator} for example usage.
@@ -104,11 +104,14 @@ public abstract class AbstractCoordinator implements Closeable {
     protected final Time time;
     protected final long retryBackoffMs;
 
+    // 心跳监测
     private HeartbeatThread heartbeatThread = null;
     private boolean rejoinNeeded = true;
     private boolean needsJoinPrepare = true;
+    // consumer状态
     private MemberState state = MemberState.UNJOINED;
     private RequestFuture<ByteBuffer> joinFuture = null;
+    // 协调者节点
     private Node coordinator = null;
     private Generation generation = Generation.NO_GENERATION;
 
@@ -189,6 +192,7 @@ public abstract class AbstractCoordinator implements Closeable {
      */
     public synchronized void ensureCoordinatorReady() {
         while (coordinatorUnknown()) {
+            // 向leader节点发送消息，分配新的协调者节点
             RequestFuture<Void> future = lookupCoordinator();
             client.poll(future);
 
