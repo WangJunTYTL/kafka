@@ -109,12 +109,14 @@ public class SubscriptionState {
             throw new IllegalStateException(SUBSCRIPTION_EXCEPTION_MESSAGE);
     }
 
+    // 订阅topic，调用该函数不会与服务端通信，而是把订阅信息维护到本地，然后在启动阶段，会把信息提交到server
+    // 所以在consumer启动后 在调用该函数是否还有意义呢 ？ 运行过程中是否可以改动？
     public void subscribe(Set<String> topics, ConsumerRebalanceListener listener) {
         if (listener == null)
             throw new IllegalArgumentException("RebalanceListener cannot be null");
-
+        // 标记当前订阅方式，1用户指定订阅的topic，2直接指定订阅的partition 3指定订阅的topic正则模式
         setSubscriptionType(SubscriptionType.AUTO_TOPICS);
-
+        // consumer rebalance 过程调用的listener
         this.listener = listener;
 
         changeSubscription(topics);
@@ -131,6 +133,7 @@ public class SubscriptionState {
     private void changeSubscription(Set<String> topicsToSubscribe) {
         if (!this.subscription.equals(topicsToSubscribe)) {
             this.subscription = topicsToSubscribe;
+            // 这个consumer group订阅的topic列表
             this.groupSubscription.addAll(topicsToSubscribe);
         }
     }
@@ -213,6 +216,7 @@ public class SubscriptionState {
     }
 
     public boolean hasNoSubscriptionOrUserAssignment() {
+        // 如果调用过订阅topic的方法，这个地方就不会是None
         return this.subscriptionType == SubscriptionType.NONE;
     }
 

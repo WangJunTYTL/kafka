@@ -510,7 +510,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     private final Time time;
     private final ConsumerNetworkClient client; // 处理网络IO
     private final Metrics metrics;
-    // Consumer状态维护：topic、partition、offset
+    // Consumer状态维护：订阅的topic、partition、offset记录
     private final SubscriptionState subscriptions;
     private final Metadata metadata;
     private final long retryBackoffMs;
@@ -659,7 +659,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             OffsetResetStrategy offsetResetStrategy = OffsetResetStrategy.valueOf(config.getString(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG).toUpperCase(Locale.ROOT));
             // 订阅topic信息维护
             this.subscriptions = new SubscriptionState(offsetResetStrategy);
-            // consumer partition 如 rebalance 策略
+            // consumer 订阅 partition rebalance 策略
             List<PartitionAssignor> assignors = config.getConfiguredInstances(
                     ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG,
                     PartitionAssignor.class);
